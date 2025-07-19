@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
-Crypto Exchange Telegram Bot Runner
-Простой скрипт для запуска бота с обработкой ошибок
+Crypto Wallet Telegram Bot Runner
+Простой скрипт для запуска криптовалютного кошелька с обработкой ошибок
 """
 
 import asyncio
@@ -15,7 +15,8 @@ def check_requirements():
         'bot.py',
         'config.py', 
         'database.py',
-        'exchange_service.py',
+        'wallet_service.py',
+        'staking_service.py',
         'keyboards.py'
     ]
     
@@ -42,7 +43,7 @@ def check_env():
 
 async def main():
     """Основная функция запуска"""
-    print("🚀 Запуск Crypto Exchange Bot...")
+    print("🚀 Запуск Crypto Wallet Bot...")
     
     # Проверки
     if not check_requirements():
@@ -53,13 +54,15 @@ async def main():
         print("BOT_TOKEN=your_bot_token_here")
         print("ADMIN_IDS=123456789")
         print("SECRET_KEY=your-secret-key")
+        print("INFURA_KEY=your_infura_key_here")
+        print("TRONGRID_KEY=your_trongrid_key_here")
         sys.exit(1)
     
     try:
         # Импорт и запуск бота
         from bot import main as bot_main
         print("✅ Все проверки пройдены")
-        print("🤖 Запуск бота...")
+        print("🤖 Запуск криптовалютного кошелька...")
         await bot_main()
         
     except ImportError as e:

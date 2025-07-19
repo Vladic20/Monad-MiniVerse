@@ -1,15 +1,17 @@
 import asyncio
 import logging
+import re
 from aiogram import Bot, Dispatcher, types, F
 from aiogram.fsm.storage.memory import MemoryStorage
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
 from aiogram.filters import Command
-from aiogram.types import FSInputFile
+from aiogram.utils.markdown import hbold, hcode
 
 from config import BOT_TOKEN, ADMIN_IDS
 from database import Database
-from exchange_service import ExchangeService
+from wallet_service import WalletService
+from staking_service import StakingService
 from keyboards import *
 
 # Configure logging
@@ -23,45 +25,70 @@ dp = Dispatcher(storage=storage)
 
 # Initialize services
 db = Database()
-exchange_service = ExchangeService(db)
+wallet_service = WalletService(db)
+staking_service = StakingService(db, wallet_service)
 
 # FSM States
-class ExchangeStates(StatesGroup):
-    waiting_for_amount = State()
-    waiting_for_confirmation = State()
+class WalletGenerationStates(StatesGroup):
+    waiting_for_count = State()
 
-class AdminStates(StatesGroup):
-    waiting_for_user_id = State()
+class WithdrawalStates(StatesGroup):
+    waiting_for_wallet = State()
     waiting_for_amount = State()
-    waiting_for_currency = State()
+    waiting_for_address = State()
+
+class SwapStates(StatesGroup):
+    waiting_for_wallet = State()
+    waiting_for_amount = State()
+
+class StakingStates(StatesGroup):
+    waiting_for_wallet = State()
+    waiting_for_amount = State()
 
 # User states storage
 user_states = {}
 
+def escape_markdown(text: str) -> str:
+    """Escape text for Markdown V2"""
+    escape_chars = ['_', '*', '[', ']', '(', ')', '~', '`', '>', '#', '+', '-', '=', '|', '{', '}', '.', '!']
+    for char in escape_chars:
+        text = text.replace(char, f'\\{char}')
+    return text
+
 @dp.message(Command("start"))
 async def cmd_start(message: types.Message):
     """Start command handler"""
-    user_id = message.from_user.id
+    telegram_id = message.from_user.id
     user = message.from_user
     
-    # Create user if not exists
-    if not db.get_user(user_id):
-        db.create_user(user_id, user.username, user.first_name, user.last_name)
+    # Check if user exists
+    existing_user = db.get_user(telegram_id)
+    if not existing_user:
+        # Create new user
+        new_user = db.create_user(telegram_id)
+        if not new_user:
+            await message.answer("❌ Ошибка создания пользователя")
+            return
+        
+        welcome_text = f"""
+🌸 Добро пожаловать, самурай\\! 🌸
+
+Ваш аккаунт: {hcode(new_user['account_id'])}
+Создан: {new_user['creation_date'][:19]}
+
+Выберите действие ниже\\! 🗡️
+        """
+    else:
+        welcome_text = f"""
+🌸 С возвращением, самурай\\! 🌸
+
+Ваш аккаунт: {hcode(existing_user['account_id'])}
+Создан: {existing_user['creation_date'][:19]}
+
+Выберите действие ниже\\! 🗡️
+        """
     
-    welcome_text = f"""
-🎉 Добро пожаловать в Crypto Exchange Bot!
-
-💎 Ваш надежный партнер для обмена валют и криптовалют.
-
-🔹 Поддерживаемые валюты: USD, EUR, RUB, BTC, ETH
-🔹 Минимальная сумма: ${config.MIN_TRADE_AMOUNT}
-🔹 Максимальная сумма: ${config.MAX_TRADE_AMOUNT}
-🔹 Комиссия: {config.EXCHANGE_FEE * 100}%
-
-Выберите действие в меню ниже:
-    """
-    
-    await message.answer(welcome_text, reply_markup=get_main_keyboard())
+    await message.answer(welcome_text, reply_markup=get_main_keyboard(), parse_mode="MarkdownV2")
 
 @dp.message(Command("help"))
 async def cmd_help(message: types.Message):
@@ -69,231 +96,762 @@ async def cmd_help(message: types.Message):
     help_text = """
 📚 Справка по использованию бота:
 
-💱 Обмен валют:
-1. Нажмите "💱 Обмен валют"
-2. Выберите валюту для обмена
-3. Выберите валюту для получения
-4. Введите сумму
-5. Подтвердите операцию
+🎌 Генерировать кошельки:
+• Создание кошельков для 8 блокчейн\\-сетей
+• Поддержка ETH, TRX, SOL, BNB, DOGE, AVAX, POL, XRP
+• Безопасное хранение приватных ключей
 
 💰 Баланс:
-- Просмотр баланса по всем валютам
-- История операций
+• Проверка балансов по всем кошелькам
+• Поддержка нативных токенов и USDT
 
-📊 Курсы валют:
-- Актуальные курсы обмена
-- Графики изменения
+📥 Пополнить:
+• Получение адресов для пополнения
+• Копирование адресов для переводов
 
-⚙️ Настройки:
-- Уведомления
-- Язык интерфейса
-- Безопасность
+📤 Вывести:
+• Вывод средств с кошельков
+• Поддержка ETH и TRX автоматически
+• Ручная обработка для других сетей
+
+🔄 Свапнуть:
+• Обмен между нативными токенами и USDT
+• Поддержка ETH/ERC20 и TRX/TRC20
+
+💹 Стейкинг:
+• Фиксированные периоды: 1, 3, 6, 9 месяцев
+• Ставки: 16\\%, 18\\%, 20\\%, 22\\% годовых
+• Досрочный вывод с штрафом 50\\%
 
 🔒 Безопасность:
-- Все операции защищены
-- Комиссия: 2%
-- Лимиты на операции
+• Приватные ключи хранятся в БД
+• Средства остаются в кошельках пользователей
+• Все операции логируются
 
 Для связи с поддержкой: @support
     """
     
-    await message.answer(help_text, reply_markup=get_back_keyboard("back_to_main"))
+    await message.answer(help_text, reply_markup=get_back_keyboard("back_to_main"), parse_mode="MarkdownV2")
+
+@dp.message(F.text == "🎌 Генерировать кошелёк")
+async def start_wallet_generation(message: types.Message):
+    """Start wallet generation process"""
+    await message.answer(
+        "🎌 Выберите сеть для генерации кошелька:",
+        reply_markup=get_network_keyboard()
+    )
 
 @dp.message(F.text == "💰 Баланс")
 async def show_balance(message: types.Message):
     """Show user balance"""
-    user_id = message.from_user.id
-    balance = exchange_service.get_user_balance(user_id)
+    telegram_id = message.from_user.id
+    user = db.get_user(telegram_id)
     
-    if not balance:
-        await message.answer("❌ Ошибка получения баланса")
+    if not user:
+        await message.answer("❌ Пользователь не найден")
         return
     
-    balance_text = "💰 Ваш баланс:\n\n"
-    for currency, amount in balance.items():
-        if amount > 0:
-            balance_text += f"{currency}: {amount:.4f}\n"
+    wallets = db.get_user_wallets(user['user_id'])
     
-    if all(amount == 0 for amount in balance.values()):
-        balance_text += "У вас пока нет средств на балансе.\n"
-        balance_text += "Начните с обмена валют! 💱"
+    if not wallets:
+        await message.answer(
+            "У вас ещё нет кошельков\\. Сгенерируйте их\\!",
+            reply_markup=get_back_keyboard("back_to_main"),
+            parse_mode="MarkdownV2"
+        )
+        return
     
-    await message.answer(balance_text, reply_markup=get_back_keyboard("back_to_main"))
-
-@dp.message(F.text == "💱 Обмен валют")
-async def start_exchange(message: types.Message):
-    """Start exchange process"""
+    # Get balances
+    balances = await wallet_service.get_all_balances(user['user_id'])
+    
+    if not balances:
+        await message.answer("❌ Ошибка получения балансов")
+        return
+    
+    balance_text = "💰 Ваши балансы:\n\n"
+    
+    for network, network_wallets in balances.items():
+        network_name = config.SUPPORTED_NETWORKS[network]['name']
+        balance_text += f"🌐 {network_name}:\n"
+        
+        for address, balance_data in network_wallets.items():
+            balance_text += f"📍 {hcode(address[:10] + '...')}\n"
+            
+            # Native token balance
+            native_balance = balance_data['native']
+            if native_balance > 0:
+                symbol = balance_data['symbol']
+                balance_text += f"  • {symbol}: {native_balance:.6f}\n"
+            
+            # USDT balance
+            if 'USDT' in balance_data and balance_data['USDT'] > 0:
+                balance_text += f"  • USDT: {balance_data['USDT']:.6f}\n"
+            
+            balance_text += "\n"
+    
     await message.answer(
-        "💱 Выберите валюту для обмена:",
-        reply_markup=get_currency_keyboard()
+        balance_text,
+        reply_markup=get_back_keyboard("back_to_main"),
+        parse_mode="MarkdownV2"
     )
 
-@dp.message(F.text == "📊 Курсы валют")
-async def show_rates(message: types.Message):
-    """Show current exchange rates"""
-    rates_text = "📊 Текущие курсы валют:\n\n"
+@dp.message(F.text == "📥 Пополнить")
+async def show_deposit_addresses(message: types.Message):
+    """Show deposit addresses"""
+    telegram_id = message.from_user.id
+    user = db.get_user(telegram_id)
     
-    base_currencies = ['USD', 'EUR']
-    target_currencies = ['USD', 'EUR', 'RUB', 'BTC', 'ETH']
-    
-    for base in base_currencies:
-        rates_text += f"💱 {base}:\n"
-        for target in target_currencies:
-            if base != target:
-                rate = exchange_service.get_exchange_rate(base, target)
-                rates_text += f"  {target}: {rate:.6f}\n"
-        rates_text += "\n"
-    
-    await message.answer(rates_text, reply_markup=get_back_keyboard("back_to_main"))
-
-@dp.message(F.text == "📈 История операций")
-async def show_history(message: types.Message):
-    """Show transaction history"""
-    user_id = message.from_user.id
-    transactions = db.get_user_transactions(user_id, 5)
-    
-    if not transactions:
-        await message.answer("📈 У вас пока нет операций.", reply_markup=get_back_keyboard("back_to_main"))
+    if not user:
+        await message.answer("❌ Пользователь не найден")
         return
     
-    history_text = "📈 Последние операции:\n\n"
-    for tx in transactions:
-        date = tx['created_at'][:19]  # Format datetime
-        history_text += f"🕐 {date}\n"
-        history_text += f"💱 {tx['amount']:.4f} {tx['from_currency']} → {tx['total_amount']:.4f} {tx['to_currency']}\n"
-        history_text += f"📊 Курс: {tx['rate']:.6f}\n"
-        history_text += f"💸 Комиссия: {tx['fee']:.4f} {tx['from_currency']}\n"
-        history_text += f"✅ Статус: {tx['status']}\n\n"
+    wallets = db.get_user_wallets(user['user_id'])
     
-    await message.answer(history_text, reply_markup=get_back_keyboard("back_to_main"))
-
-@dp.message(F.text == "⚙️ Настройки")
-async def show_settings(message: types.Message):
-    """Show settings menu"""
-    if message.from_user.id in ADMIN_IDS:
-        await message.answer("⚙️ Настройки:", reply_markup=get_admin_keyboard())
-    else:
-        await message.answer("⚙️ Настройки:", reply_markup=get_settings_keyboard())
-
-@dp.message(F.text == "ℹ️ Помощь")
-async def show_help(message: types.Message):
-    """Show help information"""
-    await cmd_help(message)
-
-# Callback handlers
-@dp.callback_query(F.data.startswith("currency_"))
-async def handle_currency_selection(callback: types.CallbackQuery):
-    """Handle currency selection"""
-    currency = callback.data.split("_")[1]
-    user_states[callback.from_user.id] = {"from_currency": currency}
+    if not wallets:
+        await message.answer(
+            "У вас нет кошельков для пополнения\\. Сгенерируйте их\\!",
+            reply_markup=get_back_keyboard("back_to_main"),
+            parse_mode="MarkdownV2"
+        )
+        return
     
-    await callback.message.edit_text(
-        f"💱 Вы выбрали {currency}\nТеперь выберите валюту для получения:",
-        reply_markup=get_exchange_keyboard(currency)
+    deposit_text = "📥 Адреса для пополнения:\n\n"
+    
+    for wallet in wallets:
+        network_name = config.SUPPORTED_NETWORKS[wallet['network']]['name']
+        deposit_text += f"🌐 {network_name}:\n"
+        deposit_text += f"📍 {hcode(wallet['address'])}\n\n"
+    
+    await message.answer(
+        deposit_text,
+        reply_markup=get_back_keyboard("back_to_main"),
+        parse_mode="MarkdownV2"
     )
 
-@dp.callback_query(F.data.startswith("exchange_"))
-async def handle_exchange_selection(callback: types.CallbackQuery):
-    """Handle exchange currency pair selection"""
-    _, from_currency, to_currency = callback.data.split("_")
-    user_states[callback.from_user.id]["to_currency"] = to_currency
+@dp.message(F.text == "📤 Вывести")
+async def start_withdrawal(message: types.Message):
+    """Start withdrawal process"""
+    telegram_id = message.from_user.id
+    user = db.get_user(telegram_id)
     
-    rate = exchange_service.get_exchange_rate(from_currency, to_currency)
-    rate_text = f"📊 Курс: 1 {from_currency} = {rate:.6f} {to_currency}\n\n"
+    if not user:
+        await message.answer("❌ Пользователь не найден")
+        return
     
-    await callback.message.edit_text(
-        f"💱 Обмен {from_currency} → {to_currency}\n{rate_text}Выберите сумму:",
-        reply_markup=get_amount_keyboard(from_currency, to_currency)
+    wallets = db.get_user_wallets(user['user_id'])
+    
+    if not wallets:
+        await message.answer(
+            "У вас нет кошельков для вывода\\. Сгенерируйте их\\!",
+            reply_markup=get_back_keyboard("back_to_main"),
+            parse_mode="MarkdownV2"
+        )
+        return
+    
+    withdrawal_text = "📤 Выберите кошелек для вывода:\n\n"
+    
+    for wallet in wallets:
+        network_name = config.SUPPORTED_NETWORKS[wallet['network']]['name']
+        withdrawal_text += f"🌐 {network_name}:\n"
+        withdrawal_text += f"📍 {hcode(wallet['address'])}\n\n"
+    
+    await message.answer(
+        withdrawal_text + "Введите адрес кошелька:",
+        reply_markup=get_back_keyboard("back_to_main"),
+        parse_mode="MarkdownV2"
+    )
+    
+    # Set state
+    user_states[telegram_id] = {'action': 'withdrawal'}
+    await WithdrawalStates.waiting_for_wallet.set()
+
+@dp.message(F.text == "🔄 Свапнуть")
+async def start_swap(message: types.Message):
+    """Start swap process"""
+    telegram_id = message.from_user.id
+    user = db.get_user(telegram_id)
+    
+    if not user:
+        await message.answer("❌ Пользователь не найден")
+        return
+    
+    wallets = db.get_user_wallets(user['user_id'])
+    
+    # Filter wallets that support swaps (ETH and TRX)
+    swap_wallets = [w for w in wallets if w['network'] in ['ETH', 'TRX']]
+    
+    if not swap_wallets:
+        await message.answer(
+            "У вас нет кошельков для свапа\\. Создайте кошельки ETH или TRX\\!",
+            reply_markup=get_back_keyboard("back_to_main"),
+            parse_mode="MarkdownV2"
+        )
+        return
+    
+    swap_text = "🔄 Выберите кошелек для свапа:\n\n"
+    
+    for wallet in swap_wallets:
+        network_name = config.SUPPORTED_NETWORKS[wallet['network']]['name']
+        swap_text += f"🌐 {network_name}:\n"
+        swap_text += f"📍 {hcode(wallet['address'])}\n\n"
+    
+    await message.answer(
+        swap_text + "Введите адрес кошелька:",
+        reply_markup=get_back_keyboard("back_to_main"),
+        parse_mode="MarkdownV2"
+    )
+    
+    # Set state
+    user_states[telegram_id] = {'action': 'swap'}
+    await SwapStates.waiting_for_wallet.set()
+
+@dp.message(F.text == "💹 Стейкинг")
+async def show_staking_menu(message: types.Message):
+    """Show staking menu"""
+    await message.answer(
+        "💹 Стейкинг:",
+        reply_markup=get_staking_actions_keyboard()
     )
 
-@dp.callback_query(F.data.startswith("amount_"))
-async def handle_amount_selection(callback: types.CallbackQuery):
-    """Handle amount selection"""
-    _, from_currency, to_currency, amount = callback.data.split("_")
-    amount = float(amount)
-    
-    await show_exchange_preview(callback, from_currency, to_currency, amount)
+@dp.message(F.text == "ℹ️ Инфо")
+async def show_info(message: types.Message):
+    """Show bot information"""
+    info_text = """
+🌸 Информация о боте
 
-@dp.callback_query(F.data.startswith("manual_amount_"))
-async def handle_manual_amount(callback: types.CallbackQuery, state: FSMContext):
-    """Handle manual amount input"""
-    _, from_currency, to_currency = callback.data.split("_")
-    
-    await state.update_data(from_currency=from_currency, to_currency=to_currency)
-    await state.set_state(ExchangeStates.waiting_for_amount)
-    
-    await callback.message.edit_text(
-        f"✏️ Введите сумму {from_currency} для обмена:\n\n"
-        f"Минимум: {config.MIN_TRADE_AMOUNT}\n"
-        f"Максимум: {config.MAX_TRADE_AMOUNT}",
-        reply_markup=get_back_keyboard(f"back_to_amount_{from_currency}_{to_currency}")
-    )
+Добро пожаловать в мир крипто\\-самураев\\! 🗡️
 
-@dp.message(ExchangeStates.waiting_for_amount)
-async def handle_amount_input(message: types.Message, state: FSMContext):
-    """Handle amount input"""
-    try:
-        amount = float(message.text)
-        data = await state.get_data()
-        from_currency = data["from_currency"]
-        to_currency = data["to_currency"]
-        
-        await state.clear()
-        await show_exchange_preview(message, from_currency, to_currency, amount)
-        
-    except ValueError:
-        await message.answer("❌ Пожалуйста, введите корректное число.")
+• Генерировать кошельки: 🎌 Генерировать кошелёк
+• Проверять балансы: 💰 Баланс
+• Пополнять: 📥 Пополнить
+• Выводить: 📤 Вывести
+• Свап: 🔄 Свапнуть
+• Стейкинг: 💹 Стейкинг
 
-async def show_exchange_preview(message_or_callback, from_currency: str, to_currency: str, amount: float):
-    """Show exchange preview"""
-    total_amount, fee, rate = exchange_service.calculate_exchange(from_currency, to_currency, amount)
-    
-    preview_text = f"""
-💱 Предварительный расчет обмена:
-
-📤 Отправляете: {amount:.4f} {from_currency}
-📥 Получаете: {total_amount:.4f} {to_currency}
-💸 Комиссия: {fee:.4f} {from_currency}
-📊 Курс: 1 {from_currency} = {rate:.6f} {to_currency}
-
-Подтвердите операцию:
+Все данные в безопасности\\. Удачи\\! 🌸
     """
     
-    keyboard = get_confirm_keyboard(from_currency, to_currency, amount)
-    
-    if isinstance(message_or_callback, types.Message):
-        await message_or_callback.answer(preview_text, reply_markup=keyboard)
-    else:
-        await message_or_callback.message.edit_text(preview_text, reply_markup=keyboard)
+    await message.answer(
+        info_text,
+        reply_markup=get_back_keyboard("back_to_main"),
+        parse_mode="MarkdownV2"
+    )
 
-@dp.callback_query(F.data.startswith("confirm_"))
-async def handle_exchange_confirmation(callback: types.CallbackQuery):
-    """Handle exchange confirmation"""
-    _, from_currency, to_currency, amount = callback.data.split("_")
-    amount = float(amount)
-    user_id = callback.from_user.id
+# Callback handlers
+@dp.callback_query(F.data.startswith("generate_"))
+async def handle_network_selection(callback: types.CallbackQuery):
+    """Handle network selection for wallet generation"""
+    network = callback.data.split("_")[1]
     
-    # Execute exchange
-    success, message, transaction_info = await exchange_service.execute_exchange(
-        user_id, from_currency, to_currency, amount
+    await callback.message.edit_text(
+        f"🎌 Выберите количество кошельков для {network}:",
+        reply_markup=get_wallet_count_keyboard(network)
+    )
+
+@dp.callback_query(F.data.startswith("count_"))
+async def handle_wallet_count(callback: types.CallbackQuery):
+    """Handle wallet count selection"""
+    _, network, count = callback.data.split("_")
+    count = int(count)
+    
+    await generate_wallets(callback, network, count)
+
+@dp.callback_query(F.data.startswith("manual_count_"))
+async def handle_manual_count(callback: types.CallbackQuery, state: FSMContext):
+    """Handle manual count input"""
+    network = callback.data.split("_")[2]
+    
+    await state.update_data(network=network)
+    await state.set_state(WalletGenerationStates.waiting_for_count)
+    
+    await callback.message.edit_text(
+        f"✏️ Введите количество кошельков для {network} \\(1\\-99\\):",
+        reply_markup=get_back_keyboard("back_to_networks"),
+        parse_mode="MarkdownV2"
+    )
+
+@dp.message(WalletGenerationStates.waiting_for_count)
+async def handle_count_input(message: types.Message, state: FSMContext):
+    """Handle count input"""
+    try:
+        count = int(message.text)
+        if count < 1 or count > 99:
+            await message.answer("❌ Введите корректное число от 1 до 99\\.")
+            return
+        
+        data = await state.get_data()
+        network = data["network"]
+        
+        await state.clear()
+        await generate_wallets(message, network, count)
+        
+    except ValueError:
+        await message.answer("❌ Пожалуйста, введите корректное число\\.")
+
+async def generate_wallets(message_or_callback, network: str, count: int):
+    """Generate wallets"""
+    try:
+        telegram_id = message_or_callback.from_user.id
+        user = db.get_user(telegram_id)
+        
+        if not user:
+            await message_or_callback.answer("❌ Пользователь не найден")
+            return
+        
+        # Generate wallets
+        wallets = wallet_service.generate_wallet(network, count)
+        
+        # Save to database
+        for wallet in wallets:
+            db.create_wallet(
+                user['user_id'], wallet['network'], wallet['address'],
+                wallet['private_key'], wallet['seed_phrase']
+            )
+        
+        # Format response
+        network_name = config.SUPPORTED_NETWORKS[network]['name']
+        response_text = f"🗡️ Сгенерированы кошельки {network_name}:\n\n"
+        
+        for i, wallet in enumerate(wallets, 1):
+            response_text += f"{i}\\. {hcode(wallet['address'])}\n"
+        
+        if isinstance(message_or_callback, types.Message):
+            await message_or_callback.answer(
+                response_text,
+                reply_markup=get_back_keyboard("back_to_main"),
+                parse_mode="MarkdownV2"
+            )
+        else:
+            await message_or_callback.message.edit_text(
+                response_text,
+                reply_markup=get_back_keyboard("back_to_main"),
+                parse_mode="MarkdownV2"
+            )
+            
+    except Exception as e:
+        logger.error(f"Error generating wallets: {e}")
+        error_text = "❌ Ошибка генерации кошельков\\. Попробуйте снова\\."
+        
+        if isinstance(message_or_callback, types.Message):
+            await message_or_callback.answer(error_text, parse_mode="MarkdownV2")
+        else:
+            await message_or_callback.message.edit_text(error_text, parse_mode="MarkdownV2")
+
+# Withdrawal handlers
+@dp.message(WithdrawalStates.waiting_for_wallet)
+async def handle_withdrawal_wallet(message: types.Message, state: FSMContext):
+    """Handle withdrawal wallet selection"""
+    telegram_id = message.from_user.id
+    user = db.get_user(telegram_id)
+    
+    if not user:
+        await message.answer("❌ Пользователь не найден")
+        await state.clear()
+        return
+    
+    wallet_address = message.text.strip()
+    wallet = db.get_wallet_by_address(user['user_id'], wallet_address)
+    
+    if not wallet:
+        await message.answer("❌ Адрес не найден в вашем списке\\.")
+        return
+    
+    await state.update_data(wallet_address=wallet_address, network=wallet['network'])
+    
+    # Show asset selection
+    await message.answer(
+        f"📤 Выберите актив для вывода:",
+        reply_markup=get_asset_keyboard(wallet['network'], "withdraw")
+    )
+    
+    await state.clear()
+
+@dp.callback_query(F.data.startswith("withdraw_"))
+async def handle_withdrawal_asset(callback: types.CallbackQuery, state: FSMContext):
+    """Handle withdrawal asset selection"""
+    _, network, asset = callback.data.split("_")
+    
+    await state.update_data(network=network, asset=asset)
+    await state.set_state(WithdrawalStates.waiting_for_amount)
+    
+    network_name = config.SUPPORTED_NETWORKS[network]['name']
+    min_fee = config.SUPPORTED_NETWORKS[network]['min_fee']
+    
+    await callback.message.edit_text(
+        f"📤 Введите сумму {asset} для вывода:\n\n"
+        f"Сеть: {network_name}\n"
+        f"Минимальная комиссия: {min_fee} {asset}",
+        reply_markup=get_back_keyboard("back_to_main"),
+        parse_mode="MarkdownV2"
+    )
+
+@dp.message(WithdrawalStates.waiting_for_amount)
+async def handle_withdrawal_amount(message: types.Message, state: FSMContext):
+    """Handle withdrawal amount input"""
+    try:
+        amount = float(message.text)
+        if amount <= 0:
+            await message.answer("❌ Введите корректную положительную сумму\\.")
+            return
+        
+        data = await state.get_data()
+        network = data["network"]
+        asset = data["asset"]
+        wallet_address = data["wallet_address"]
+        
+        # Check balance
+        current_balance = await wallet_service.get_balance(wallet_address, network, asset)
+        if amount > current_balance:
+            await message.answer(f"❌ Недостаточно {asset}\\. Баланс: {current_balance:.6f}")
+            await state.clear()
+            return
+        
+        await state.update_data(amount=amount)
+        await state.set_state(WithdrawalStates.waiting_for_address)
+        
+        await message.answer(
+            f"📤 Введите адрес получателя:",
+            reply_markup=get_back_keyboard("back_to_main")
+        )
+        
+    except ValueError:
+        await message.answer("❌ Пожалуйста, введите корректное число\\.")
+
+@dp.message(WithdrawalStates.waiting_for_address)
+async def handle_withdrawal_address(message: types.Message, state: FSMContext):
+    """Handle withdrawal address input"""
+    data = await state.get_data()
+    network = data["network"]
+    asset = data["asset"]
+    amount = data["amount"]
+    wallet_address = data["wallet_address"]
+    
+    recipient_address = message.text.strip()
+    
+    # Validate address
+    if not wallet_service.validate_address(recipient_address, network):
+        await message.answer("❌ Неверный формат адреса\\.")
+        await state.clear()
+        return
+    
+    telegram_id = message.from_user.id
+    user = db.get_user(telegram_id)
+    
+    # Create withdrawal log
+    token_type = f"{asset} Withdrawal"
+    success = db.create_withdrawal_log(
+        user['user_id'], wallet_address, recipient_address,
+        amount, token_type, network
+    )
+    
+    if not success:
+        await message.answer("❌ Ошибка создания запроса на вывод\\.")
+        await state.clear()
+        return
+    
+    # Handle different networks
+    if network in ['ETH', 'TRX']:
+        # Automatic withdrawal for ETH and TRX
+        await message.answer("⏳ Отправляю транзакцию\\.\\.\\.")
+        # Here you would implement actual withdrawal logic
+        await message.answer(
+            f"✅ Вывод инициирован\\! Токен: {asset}\\. Сумма: {amount}\\. TxID: pending\\.",
+            parse_mode="MarkdownV2"
+        )
+    else:
+        # Manual processing for other networks
+        await message.answer(
+            f"✅ Запрос на вывод отправлен на ручную обработку\\! Токен: {asset}\\. Сумма: {amount}\\.",
+            parse_mode="MarkdownV2"
+        )
+    
+    await state.clear()
+
+# Swap handlers
+@dp.message(SwapStates.waiting_for_wallet)
+async def handle_swap_wallet(message: types.Message, state: FSMContext):
+    """Handle swap wallet selection"""
+    telegram_id = message.from_user.id
+    user = db.get_user(telegram_id)
+    
+    if not user:
+        await message.answer("❌ Пользователь не найден")
+        await state.clear()
+        return
+    
+    wallet_address = message.text.strip()
+    wallet = db.get_wallet_by_address(user['user_id'], wallet_address)
+    
+    if not wallet or wallet['network'] not in ['ETH', 'TRX']:
+        await message.answer("❌ Кошелек не найден или не поддерживает свапы\\.")
+        return
+    
+    await state.update_data(wallet_address=wallet_address, network=wallet['network'])
+    
+    # Show swap options
+    await message.answer(
+        f"🔄 Выберите направление свапа:",
+        reply_markup=get_swap_keyboard(wallet['network'])
+    )
+    
+    await state.clear()
+
+@dp.callback_query(F.data.startswith("swap_"))
+async def handle_swap_direction(callback: types.CallbackQuery, state: FSMContext):
+    """Handle swap direction selection"""
+    _, network, from_asset, to_asset = callback.data.split("_")
+    
+    await state.update_data(network=network, from_asset=from_asset, to_asset=to_asset)
+    await state.set_state(SwapStates.waiting_for_amount)
+    
+    await callback.message.edit_text(
+        f"🔄 Введите сумму {from_asset} для свапа на {to_asset}:",
+        reply_markup=get_back_keyboard("back_to_main"),
+        parse_mode="MarkdownV2"
+    )
+
+@dp.message(SwapStates.waiting_for_amount)
+async def handle_swap_amount(message: types.Message, state: FSMContext):
+    """Handle swap amount input"""
+    try:
+        amount = float(message.text)
+        if amount <= 0:
+            await message.answer("❌ Введите корректную положительную сумму\\.")
+            return
+        
+        data = await state.get_data()
+        network = data["network"]
+        from_asset = data["from_asset"]
+        to_asset = data["to_asset"]
+        wallet_address = data["wallet_address"]
+        
+        # Check balance
+        current_balance = await wallet_service.get_balance(wallet_address, network, from_asset)
+        if amount > current_balance:
+            await message.answer(f"❌ Недостаточно {from_asset}\\. Баланс: {current_balance:.6f}")
+            await state.clear()
+            return
+        
+        # Confirm swap
+        confirm_text = f"""
+Подтверждение свапа:
+Кошелек: {hcode(wallet_address[:10] + '...')}
+Направление: {from_asset} → {to_asset}
+Сумма: {amount}
+Баланс: {current_balance:.6f}
+
+Подтвердить\\?
+        """
+        
+        await message.answer(
+            confirm_text,
+            reply_markup=get_confirm_keyboard("swap", f"{network}_{from_asset}_{to_asset}_{amount}"),
+            parse_mode="MarkdownV2"
+        )
+        
+        await state.clear()
+        
+    except ValueError:
+        await message.answer("❌ Пожалуйста, введите корректное число\\.")
+
+# Staking handlers
+@dp.callback_query(F.data == "my_stakes")
+async def show_my_stakes(callback: types.CallbackQuery):
+    """Show user stakes"""
+    telegram_id = callback.from_user.id
+    user = db.get_user(telegram_id)
+    
+    if not user:
+        await callback.answer("❌ Пользователь не найден")
+        return
+    
+    stakes_info = await staking_service.get_user_stakes_info(user['user_id'])
+    
+    if not stakes_info:
+        await callback.message.edit_text(
+            "📊 У вас пока нет стейков\\.",
+            reply_markup=get_back_keyboard("back_to_staking"),
+            parse_mode="MarkdownV2"
+        )
+        return
+    
+    stakes_text = "📊 Мои стейки:\n\n"
+    
+    for stake in stakes_info:
+        network_name = config.SUPPORTED_NETWORKS[stake['wallet_address'][:3]]['name']
+        stakes_text += f"🌐 {network_name}:\n"
+        stakes_text += f"📍 {hcode(stake['wallet_address'][:10] + '...')}\n"
+        stakes_text += f"💰 {stake['amount']} {stake['asset']}\n"
+        stakes_text += f"📈 Ставка: {stake['rate']}%\n"
+        stakes_text += f"📅 Статус: {stake['status']}\n"
+        stakes_text += f"🎯 Текущее вознаграждение: {stake['current_reward']:.6f} {stake['asset']}\n"
+        
+        if stake['status'] == 'active':
+            stakes_text += f"⚠️ Штраф при досрочном выводе: {stake['penalty_amount']:.6f} {stake['asset']}\n"
+        
+        stakes_text += "\n"
+    
+    await callback.message.edit_text(
+        stakes_text,
+        reply_markup=get_back_keyboard("back_to_staking"),
+        parse_mode="MarkdownV2"
+    )
+
+@dp.callback_query(F.data == "create_stake")
+async def start_create_stake(callback: types.CallbackQuery):
+    """Start create stake process"""
+    await callback.message.edit_text(
+        "💹 Выберите период стейкинга:",
+        reply_markup=get_staking_period_keyboard()
+    )
+
+@dp.callback_query(F.data.startswith("stake_period_"))
+async def handle_stake_period(callback: types.CallbackQuery, state: FSMContext):
+    """Handle staking period selection"""
+    period_key = callback.data.split("_")[2]
+    
+    await state.update_data(period_key=period_key)
+    await state.set_state(StakingStates.waiting_for_wallet)
+    
+    period_data = config.STAKING_PERIODS[period_key]
+    await callback.message.edit_text(
+        f"💹 Введите адрес кошелька для стейкинга:\n\n"
+        f"Период: {period_data['months']} месяцев\n"
+        f"Ставка: {period_data['rate']}% годовых",
+        reply_markup=get_back_keyboard("back_to_staking"),
+        parse_mode="MarkdownV2"
+    )
+
+@dp.message(StakingStates.waiting_for_wallet)
+async def handle_stake_wallet(message: types.Message, state: FSMContext):
+    """Handle staking wallet selection"""
+    telegram_id = message.from_user.id
+    user = db.get_user(telegram_id)
+    
+    if not user:
+        await message.answer("❌ Пользователь не найден")
+        await state.clear()
+        return
+    
+    wallet_address = message.text.strip()
+    wallet = db.get_wallet_by_address(user['user_id'], wallet_address)
+    
+    if not wallet:
+        await message.answer("❌ Кошелек не найден\\.")
+        return
+    
+    await state.update_data(wallet_address=wallet_address, network=wallet['network'])
+    
+    # Show asset selection
+    await message.answer(
+        f"💹 Выберите актив для стейкинга:",
+        reply_markup=get_asset_keyboard(wallet['network'], "stake")
+    )
+    
+    await state.clear()
+
+@dp.callback_query(F.data.startswith("stake_"))
+async def handle_stake_asset(callback: types.CallbackQuery, state: FSMContext):
+    """Handle staking asset selection"""
+    _, network, asset = callback.data.split("_")
+    
+    await state.update_data(network=network, asset=asset)
+    await state.set_state(StakingStates.waiting_for_amount)
+    
+    min_amount = config.STAKING_LIMITS['min_usdt'] if asset == 'USDT' else config.STAKING_LIMITS['min_amount']
+    
+    await callback.message.edit_text(
+        f"💹 Введите сумму {asset} для стейкинга:\n\n"
+        f"Минимальная сумма: {min_amount} {asset}",
+        reply_markup=get_back_keyboard("back_to_staking"),
+        parse_mode="MarkdownV2"
+    )
+
+@dp.message(StakingStates.waiting_for_amount)
+async def handle_stake_amount(message: types.Message, state: FSMContext):
+    """Handle staking amount input"""
+    try:
+        amount = float(message.text)
+        if amount <= 0:
+            await message.answer("❌ Введите корректную положительную сумму\\.")
+            return
+        
+        data = await state.get_data()
+        period_key = data["period_key"]
+        wallet_address = data["wallet_address"]
+        asset = data["asset"]
+        
+        telegram_id = message.from_user.id
+        user = db.get_user(telegram_id)
+        
+        # Create stake
+        success, message_text, stake_data = await staking_service.create_stake(
+            user['user_id'], wallet_address, amount, asset, period_key
+        )
+        
+        if success:
+            period_data = config.STAKING_PERIODS[period_key]
+            confirm_text = f"""
+✅ Стейкинг успешно создан\\!
+
+💰 Сумма: {amount} {asset}
+📅 Период: {period_data['months']} месяцев
+📈 Ставка: {period_data['rate']}% годовых
+🎯 Ожидаемое вознаграждение: {stake_data['expected_reward']:.6f} {asset}
+📅 Окончание: {stake_data['end_date'][:19]}
+
+Спасибо за использование стейкинга\\! 🌸
+            """
+        else:
+            confirm_text = f"❌ {message_text}"
+        
+        await message.answer(
+            confirm_text,
+            reply_markup=get_back_keyboard("back_to_main"),
+            parse_mode="MarkdownV2"
+        )
+        
+        await state.clear()
+        
+    except ValueError:
+        await message.answer("❌ Пожалуйста, введите корректное число\\.")
+
+# Confirmation handlers
+@dp.callback_query(F.data.startswith("confirm_"))
+async def handle_confirmation(callback: types.CallbackQuery):
+    """Handle confirmations"""
+    action_data = callback.data.split("_", 2)[2]
+    
+    if action_data.startswith("swap_"):
+        await handle_swap_confirmation(callback, action_data)
+    else:
+        await callback.answer("❌ Неизвестное действие")
+
+async def handle_swap_confirmation(callback: types.CallbackQuery, action_data: str):
+    """Handle swap confirmation"""
+    _, network, from_asset, to_asset, amount = action_data.split("_")
+    amount = float(amount)
+    
+    telegram_id = callback.from_user.id
+    user = db.get_user(telegram_id)
+    
+    # Create swap log
+    token_type = f"SWAP: {from_asset} to {to_asset}"
+    success = db.create_withdrawal_log(
+        user['user_id'], "swap", "swap",
+        amount, token_type, network, "pending"
     )
     
     if success:
-        result_text = f"""
-✅ Обмен выполнен успешно!
-
-📤 Отправлено: {transaction_info['amount']:.4f} {transaction_info['from_currency']}
-📥 Получено: {transaction_info['total_amount']:.4f} {transaction_info['to_currency']}
-💸 Комиссия: {transaction_info['fee']:.4f} {transaction_info['from_currency']}
-📊 Курс: {transaction_info['rate']:.6f}
-🕐 Время: {transaction_info.get('timestamp', 'Сейчас')}
-
-Спасибо за использование нашего сервиса! 🎉
-        """
+        await callback.message.edit_text(
+            "⏳ Ждите, ваш обмен в процессе обработки\\.",
+            parse_mode="MarkdownV2"
+        )
     else:
-        result_text = f"❌ Ошибка: {message}"
-    
-    await callback.message.edit_text(result_text, reply_markup=get_back_keyboard("back_to_main"))
+        await callback.message.edit_text(
+            "❌ Ошибка создания свапа\\.",
+            parse_mode="MarkdownV2"
+        )
 
 # Back navigation handlers
 @dp.callback_query(F.data == "back_to_main")
@@ -304,106 +862,28 @@ async def back_to_main(callback: types.CallbackQuery):
         reply_markup=get_main_keyboard()
     )
 
-@dp.callback_query(F.data == "back_to_currencies")
-async def back_to_currencies(callback: types.CallbackQuery):
-    """Back to currency selection"""
+@dp.callback_query(F.data == "back_to_networks")
+async def back_to_networks(callback: types.CallbackQuery):
+    """Back to network selection"""
     await callback.message.edit_text(
-        "💱 Выберите валюту для обмена:",
-        reply_markup=get_currency_keyboard()
+        "🎌 Выберите сеть для генерации кошелька:",
+        reply_markup=get_network_keyboard()
     )
 
-@dp.callback_query(F.data.startswith("back_to_exchange_"))
-async def back_to_exchange(callback: types.CallbackQuery):
-    """Back to exchange selection"""
-    from_currency = callback.data.split("_")[-1]
+@dp.callback_query(F.data == "back_to_staking")
+async def back_to_staking(callback: types.CallbackQuery):
+    """Back to staking menu"""
     await callback.message.edit_text(
-        f"💱 Вы выбрали {from_currency}\nТеперь выберите валюту для получения:",
-        reply_markup=get_exchange_keyboard(from_currency)
-    )
-
-@dp.callback_query(F.data.startswith("back_to_amount_"))
-async def back_to_amount(callback: types.CallbackQuery):
-    """Back to amount selection"""
-    _, from_currency, to_currency = callback.data.split("_")
-    rate = exchange_service.get_exchange_rate(from_currency, to_currency)
-    rate_text = f"📊 Курс: 1 {from_currency} = {rate:.6f} {to_currency}\n\n"
-    
-    await callback.message.edit_text(
-        f"💱 Обмен {from_currency} → {to_currency}\n{rate_text}Выберите сумму:",
-        reply_markup=get_amount_keyboard(from_currency, to_currency)
-    )
-
-# Admin handlers
-@dp.callback_query(F.data == "admin_stats")
-async def admin_stats(callback: types.CallbackQuery):
-    """Show admin statistics"""
-    if callback.from_user.id not in ADMIN_IDS:
-        await callback.answer("❌ Доступ запрещен")
-        return
-    
-    # Get basic stats
-    stats_text = "📊 Статистика системы:\n\n"
-    stats_text += "🔹 Поддерживаемые валюты: 5\n"
-    stats_text += "🔹 Комиссия: 2%\n"
-    stats_text += "🔹 Минимальная сумма: $1\n"
-    stats_text += "🔹 Максимальная сумма: $10,000\n\n"
-    stats_text += "📈 Активные курсы обновляются каждые 5 минут"
-    
-    await callback.message.edit_text(stats_text, reply_markup=get_back_keyboard("back_to_admin"))
-
-@dp.callback_query(F.data == "admin_balances")
-async def admin_balances(callback: types.CallbackQuery):
-    """Admin balance management"""
-    if callback.from_user.id not in ADMIN_IDS:
-        await callback.answer("❌ Доступ запрещен")
-        return
-    
-    await callback.message.edit_text(
-        "💰 Управление балансами\n\n"
-        "Функция в разработке...",
-        reply_markup=get_back_keyboard("back_to_admin")
-    )
-
-@dp.callback_query(F.data == "admin_rates")
-async def admin_rates(callback: types.CallbackQuery):
-    """Admin rate management"""
-    if callback.from_user.id not in ADMIN_IDS:
-        await callback.answer("❌ Доступ запрещен")
-        return
-    
-    await callback.message.edit_text(
-        "📈 Управление курсами\n\n"
-        "Функция в разработке...",
-        reply_markup=get_back_keyboard("back_to_admin")
-    )
-
-@dp.callback_query(F.data == "admin_users")
-async def admin_users(callback: types.CallbackQuery):
-    """Admin user management"""
-    if callback.from_user.id not in ADMIN_IDS:
-        await callback.answer("❌ Доступ запрещен")
-        return
-    
-    await callback.message.edit_text(
-        "👥 Управление пользователями\n\n"
-        "Функция в разработке...",
-        reply_markup=get_back_keyboard("back_to_admin")
-    )
-
-@dp.callback_query(F.data == "back_to_admin")
-async def back_to_admin(callback: types.CallbackQuery):
-    """Back to admin menu"""
-    await callback.message.edit_text(
-        "⚙️ Админ панель:",
-        reply_markup=get_admin_keyboard()
+        "💹 Стейкинг:",
+        reply_markup=get_staking_actions_keyboard()
     )
 
 # Cancel handlers
-@dp.callback_query(F.data == "cancel_exchange")
-async def cancel_exchange(callback: types.CallbackQuery):
-    """Cancel exchange operation"""
+@dp.callback_query(F.data == "cancel_action")
+async def cancel_action(callback: types.CallbackQuery):
+    """Cancel action"""
     await callback.message.edit_text(
-        "❌ Операция отменена",
+        "❌ Действие отменено",
         reply_markup=get_back_keyboard("back_to_main")
     )
 
@@ -414,7 +894,7 @@ async def errors_handler(update: types.Update, exception: Exception):
     logger.error(f"Exception while handling {update}: {exception}")
     try:
         if update.message:
-            await update.message.answer("❌ Произошла ошибка. Попробуйте позже.")
+            await update.message.answer("❌ Произошла ошибка\\. Попробуйте позже\\.", parse_mode="MarkdownV2")
         elif update.callback_query:
             await update.callback_query.answer("❌ Произошла ошибка")
     except:
@@ -422,11 +902,7 @@ async def errors_handler(update: types.Update, exception: Exception):
 
 async def main():
     """Main function"""
-    # Start rate update task
-    asyncio.create_task(exchange_service.update_rates_periodically())
-    
-    # Start bot
-    logger.info("Starting bot...")
+    logger.info("Starting Crypto Wallet Bot...")
     await dp.start_polling(bot)
 
 if __name__ == "__main__":

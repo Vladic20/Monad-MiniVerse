@@ -1,6 +1,6 @@
 import sqlite3
 import asyncio
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import List, Dict, Optional, Tuple
 import config
 
@@ -17,77 +17,74 @@ class Database:
         # Users table
         cursor.execute('''
             CREATE TABLE IF NOT EXISTS users (
-                user_id INTEGER PRIMARY KEY,
-                username TEXT,
-                first_name TEXT,
-                last_name TEXT,
-                balance_usd REAL DEFAULT 1000.0,
-                balance_eur REAL DEFAULT 0.0,
-                balance_rub REAL DEFAULT 0.0,
-                balance_btc REAL DEFAULT 0.0,
-                balance_eth REAL DEFAULT 0.0,
-                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                is_active BOOLEAN DEFAULT TRUE
+                user_id INTEGER PRIMARY KEY AUTOINCREMENT,
+                telegram_id INTEGER UNIQUE NOT NULL,
+                account_id TEXT UNIQUE NOT NULL,
+                creation_date TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             )
         ''')
         
-        # Transactions table
+        # Wallets table
         cursor.execute('''
-            CREATE TABLE IF NOT EXISTS transactions (
+            CREATE TABLE IF NOT EXISTS wallets (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 user_id INTEGER,
-                from_currency TEXT,
-                to_currency TEXT,
-                amount REAL,
-                rate REAL,
-                fee REAL,
-                total_amount REAL,
-                status TEXT DEFAULT 'completed',
+                network TEXT NOT NULL,
+                address TEXT NOT NULL,
+                private_key TEXT NOT NULL,
+                seed_phrase TEXT NOT NULL,
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY (user_id) REFERENCES users (user_id),
+                UNIQUE(user_id, network, address)
+            )
+        ''')
+        
+        # Withdrawal logs table
+        cursor.execute('''
+            CREATE TABLE IF NOT EXISTS withdrawal_logs (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                user_id INTEGER,
+                from_address TEXT,
+                to_address TEXT,
+                amount REAL,
+                token_type TEXT,
+                network TEXT,
+                status TEXT DEFAULT 'pending',
+                timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                tx_hash TEXT,
                 FOREIGN KEY (user_id) REFERENCES users (user_id)
             )
         ''')
         
-        # Orders table
+        # Staking logs table
         cursor.execute('''
-            CREATE TABLE IF NOT EXISTS orders (
+            CREATE TABLE IF NOT EXISTS staking_logs (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 user_id INTEGER,
-                order_type TEXT, -- 'buy' or 'sell'
-                currency_pair TEXT,
+                wallet_address TEXT,
                 amount REAL,
-                price REAL,
-                status TEXT DEFAULT 'open',
-                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                FOREIGN KEY (user_id) REFERENCES users (user_id)
-            )
-        ''')
-        
-        # Exchange rates table
-        cursor.execute('''
-            CREATE TABLE IF NOT EXISTS exchange_rates (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                from_currency TEXT,
-                to_currency TEXT,
+                asset TEXT,
                 rate REAL,
-                updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                start_date TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                end_date TIMESTAMP,
+                status TEXT DEFAULT 'active',
+                accrued_reward REAL DEFAULT 0.0,
+                FOREIGN KEY (user_id) REFERENCES users (user_id)
             )
         ''')
         
         conn.commit()
         conn.close()
     
-    def get_user(self, user_id: int) -> Optional[Dict]:
-        """Get user by ID"""
+    def get_user(self, telegram_id: int) -> Optional[Dict]:
+        """Get user by telegram_id"""
         conn = sqlite3.connect(self.db_path)
         cursor = conn.cursor()
         
         cursor.execute('''
-            SELECT user_id, username, first_name, last_name, 
-                   balance_usd, balance_eur, balance_rub, balance_btc, balance_eth,
-                   created_at, is_active
-            FROM users WHERE user_id = ?
-        ''', (user_id,))
+            SELECT user_id, telegram_id, account_id, creation_date
+            FROM users WHERE telegram_id = ?
+        ''', (telegram_id,))
         
         row = cursor.fetchone()
         conn.close()
@@ -95,89 +92,221 @@ class Database:
         if row:
             return {
                 'user_id': row[0],
-                'username': row[1],
-                'first_name': row[2],
-                'last_name': row[3],
-                'balance_usd': row[4],
-                'balance_eur': row[5],
-                'balance_rub': row[6],
-                'balance_btc': row[7],
-                'balance_eth': row[8],
-                'created_at': row[9],
-                'is_active': bool(row[10])
+                'telegram_id': row[1],
+                'account_id': row[2],
+                'creation_date': row[3]
             }
         return None
     
-    def create_user(self, user_id: int, username: str = None, 
-                   first_name: str = None, last_name: str = None) -> bool:
-        """Create new user"""
+    def create_user(self, telegram_id: int) -> Optional[Dict]:
+        """Create new user with random account_id"""
+        import random
+        
+        # Generate 9-digit account_id
+        account_id = str(random.randint(100000000, 999999999))
+        
         try:
             conn = sqlite3.connect(self.db_path)
             cursor = conn.cursor()
             
             cursor.execute('''
-                INSERT OR IGNORE INTO users (user_id, username, first_name, last_name)
-                VALUES (?, ?, ?, ?)
-            ''', (user_id, username, first_name, last_name))
+                INSERT INTO users (telegram_id, account_id)
+                VALUES (?, ?)
+            ''', (telegram_id, account_id))
             
+            user_id = cursor.lastrowid
             conn.commit()
             conn.close()
-            return True
+            
+            return {
+                'user_id': user_id,
+                'telegram_id': telegram_id,
+                'account_id': account_id,
+                'creation_date': datetime.now().isoformat()
+            }
         except Exception as e:
             print(f"Error creating user: {e}")
-            return False
+            return None
     
-    def update_balance(self, user_id: int, currency: str, amount: float) -> bool:
-        """Update user balance"""
-        try:
-            conn = sqlite3.connect(self.db_path)
-            cursor = conn.cursor()
-            
-            balance_column = f"balance_{currency.lower()}"
-            cursor.execute(f'''
-                UPDATE users SET {balance_column} = {balance_column} + ?
-                WHERE user_id = ?
-            ''', (amount, user_id))
-            
-            conn.commit()
-            conn.close()
-            return True
-        except Exception as e:
-            print(f"Error updating balance: {e}")
-            return False
-    
-    def create_transaction(self, user_id: int, from_currency: str, to_currency: str,
-                          amount: float, rate: float, fee: float, total_amount: float) -> bool:
-        """Create transaction record"""
-        try:
-            conn = sqlite3.connect(self.db_path)
-            cursor = conn.cursor()
-            
-            cursor.execute('''
-                INSERT INTO transactions (user_id, from_currency, to_currency, 
-                                        amount, rate, fee, total_amount)
-                VALUES (?, ?, ?, ?, ?, ?, ?)
-            ''', (user_id, from_currency, to_currency, amount, rate, fee, total_amount))
-            
-            conn.commit()
-            conn.close()
-            return True
-        except Exception as e:
-            print(f"Error creating transaction: {e}")
-            return False
-    
-    def get_user_transactions(self, user_id: int, limit: int = 10) -> List[Dict]:
-        """Get user transaction history"""
+    def get_user_wallets(self, user_id: int) -> List[Dict]:
+        """Get all wallets for user"""
         conn = sqlite3.connect(self.db_path)
         cursor = conn.cursor()
         
         cursor.execute('''
-            SELECT id, from_currency, to_currency, amount, rate, fee, total_amount,
-                   status, created_at
-            FROM transactions 
-            WHERE user_id = ?
+            SELECT id, network, address, created_at
+            FROM wallets WHERE user_id = ?
             ORDER BY created_at DESC
-            LIMIT ?
+        ''', (user_id,))
+        
+        rows = cursor.fetchall()
+        conn.close()
+        
+        return [{
+            'id': row[0],
+            'network': row[1],
+            'address': row[2],
+            'created_at': row[3]
+        } for row in rows]
+    
+    def get_wallet_by_address(self, user_id: int, address: str) -> Optional[Dict]:
+        """Get wallet by address for user"""
+        conn = sqlite3.connect(self.db_path)
+        cursor = conn.cursor()
+        
+        cursor.execute('''
+            SELECT id, network, address, private_key, seed_phrase
+            FROM wallets WHERE user_id = ? AND address = ?
+        ''', (user_id, address))
+        
+        row = cursor.fetchone()
+        conn.close()
+        
+        if row:
+            return {
+                'id': row[0],
+                'network': row[1],
+                'address': row[2],
+                'private_key': row[3],
+                'seed_phrase': row[4]
+            }
+        return None
+    
+    def create_wallet(self, user_id: int, network: str, address: str, 
+                     private_key: str, seed_phrase: str) -> bool:
+        """Create new wallet"""
+        try:
+            conn = sqlite3.connect(self.db_path)
+            cursor = conn.cursor()
+            
+            cursor.execute('''
+                INSERT INTO wallets (user_id, network, address, private_key, seed_phrase)
+                VALUES (?, ?, ?, ?, ?)
+            ''', (user_id, network, address, private_key, seed_phrase))
+            
+            conn.commit()
+            conn.close()
+            return True
+        except Exception as e:
+            print(f"Error creating wallet: {e}")
+            return False
+    
+    def create_withdrawal_log(self, user_id: int, from_address: str, to_address: str,
+                            amount: float, token_type: str, network: str, 
+                            status: str = 'pending', tx_hash: str = None) -> bool:
+        """Create withdrawal log"""
+        try:
+            conn = sqlite3.connect(self.db_path)
+            cursor = conn.cursor()
+            
+            cursor.execute('''
+                INSERT INTO withdrawal_logs (user_id, from_address, to_address, 
+                                           amount, token_type, network, status, tx_hash)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            ''', (user_id, from_address, to_address, amount, token_type, network, status, tx_hash))
+            
+            conn.commit()
+            conn.close()
+            return True
+        except Exception as e:
+            print(f"Error creating withdrawal log: {e}")
+            return False
+    
+    def create_staking_log(self, user_id: int, wallet_address: str, amount: float,
+                          asset: str, rate: float, end_date: datetime) -> bool:
+        """Create staking log"""
+        try:
+            conn = sqlite3.connect(self.db_path)
+            cursor = conn.cursor()
+            
+            cursor.execute('''
+                INSERT INTO staking_logs (user_id, wallet_address, amount, asset, 
+                                        rate, end_date)
+                VALUES (?, ?, ?, ?, ?, ?)
+            ''', (user_id, wallet_address, amount, asset, rate, end_date))
+            
+            conn.commit()
+            conn.close()
+            return True
+        except Exception as e:
+            print(f"Error creating staking log: {e}")
+            return False
+    
+    def get_user_stakes(self, user_id: int) -> List[Dict]:
+        """Get all staking records for user"""
+        conn = sqlite3.connect(self.db_path)
+        cursor = conn.cursor()
+        
+        cursor.execute('''
+            SELECT id, wallet_address, amount, asset, rate, start_date, end_date, 
+                   status, accrued_reward
+            FROM staking_logs WHERE user_id = ?
+            ORDER BY start_date DESC
+        ''', (user_id,))
+        
+        rows = cursor.fetchall()
+        conn.close()
+        
+        return [{
+            'id': row[0],
+            'wallet_address': row[1],
+            'amount': row[2],
+            'asset': row[3],
+            'rate': row[4],
+            'start_date': row[5],
+            'end_date': row[6],
+            'status': row[7],
+            'accrued_reward': row[8]
+        } for row in rows]
+    
+    def get_active_stakes_count(self, user_id: int) -> int:
+        """Get count of active stakes for user"""
+        conn = sqlite3.connect(self.db_path)
+        cursor = conn.cursor()
+        
+        cursor.execute('''
+            SELECT COUNT(*) FROM staking_logs 
+            WHERE user_id = ? AND status = 'active'
+        ''', (user_id,))
+        
+        count = cursor.fetchone()[0]
+        conn.close()
+        return count
+    
+    def update_stake_status(self, stake_id: int, status: str, accrued_reward: float = None) -> bool:
+        """Update staking status"""
+        try:
+            conn = sqlite3.connect(self.db_path)
+            cursor = conn.cursor()
+            
+            if accrued_reward is not None:
+                cursor.execute('''
+                    UPDATE staking_logs SET status = ?, accrued_reward = ?
+                    WHERE id = ?
+                ''', (status, accrued_reward, stake_id))
+            else:
+                cursor.execute('''
+                    UPDATE staking_logs SET status = ?
+                    WHERE id = ?
+                ''', (status, stake_id))
+            
+            conn.commit()
+            conn.close()
+            return True
+        except Exception as e:
+            print(f"Error updating stake status: {e}")
+            return False
+    
+    def get_withdrawal_logs(self, user_id: int, limit: int = 10) -> List[Dict]:
+        """Get withdrawal logs for user"""
+        conn = sqlite3.connect(self.db_path)
+        cursor = conn.cursor()
+        
+        cursor.execute('''
+            SELECT id, from_address, to_address, amount, token_type, network, 
+                   status, timestamp, tx_hash
+            FROM withdrawal_logs WHERE user_id = ?
+            ORDER BY timestamp DESC LIMIT ?
         ''', (user_id, limit))
         
         rows = cursor.fetchall()
@@ -185,41 +314,12 @@ class Database:
         
         return [{
             'id': row[0],
-            'from_currency': row[1],
-            'to_currency': row[2],
+            'from_address': row[1],
+            'to_address': row[2],
             'amount': row[3],
-            'rate': row[4],
-            'fee': row[5],
-            'total_amount': row[6],
-            'status': row[7],
-            'created_at': row[8]
+            'token_type': row[4],
+            'network': row[5],
+            'status': row[6],
+            'timestamp': row[7],
+            'tx_hash': row[8]
         } for row in rows]
-    
-    def update_exchange_rate(self, from_currency: str, to_currency: str, rate: float):
-        """Update exchange rate"""
-        conn = sqlite3.connect(self.db_path)
-        cursor = conn.cursor()
-        
-        cursor.execute('''
-            INSERT OR REPLACE INTO exchange_rates (from_currency, to_currency, rate, updated_at)
-            VALUES (?, ?, ?, CURRENT_TIMESTAMP)
-        ''', (from_currency, to_currency, rate))
-        
-        conn.commit()
-        conn.close()
-    
-    def get_exchange_rate(self, from_currency: str, to_currency: str) -> Optional[float]:
-        """Get current exchange rate"""
-        conn = sqlite3.connect(self.db_path)
-        cursor = conn.cursor()
-        
-        cursor.execute('''
-            SELECT rate FROM exchange_rates 
-            WHERE from_currency = ? AND to_currency = ?
-            ORDER BY updated_at DESC LIMIT 1
-        ''', (from_currency, to_currency))
-        
-        row = cursor.fetchone()
-        conn.close()
-        
-        return row[0] if row else None

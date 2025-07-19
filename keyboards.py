@@ -6,98 +6,148 @@ def get_main_keyboard() -> ReplyKeyboardMarkup:
     """Main menu keyboard"""
     keyboard = ReplyKeyboardMarkup(
         keyboard=[
-            [KeyboardButton(text="💰 Баланс"), KeyboardButton(text="💱 Обмен валют")],
-            [KeyboardButton(text="📊 Курсы валют"), KeyboardButton(text="📈 История операций")],
-            [KeyboardButton(text="ℹ️ Помощь"), KeyboardButton(text="⚙️ Настройки")]
+            [KeyboardButton(text="🎌 Генерировать кошелёк"), KeyboardButton(text="💰 Баланс")],
+            [KeyboardButton(text="📥 Пополнить"), KeyboardButton(text="📤 Вывести")],
+            [KeyboardButton(text="🔄 Свапнуть"), KeyboardButton(text="💹 Стейкинг")],
+            [KeyboardButton(text="ℹ️ Инфо")]
         ],
         resize_keyboard=True,
         input_field_placeholder="Выберите действие"
     )
     return keyboard
 
-def get_currency_keyboard() -> InlineKeyboardMarkup:
-    """Currency selection keyboard"""
+def get_network_keyboard() -> InlineKeyboardMarkup:
+    """Network selection keyboard for wallet generation"""
     builder = InlineKeyboardBuilder()
     
-    currencies = config.SUPPORTED_CURRENCIES
-    for i in range(0, len(currencies), 2):
+    networks = list(config.SUPPORTED_NETWORKS.keys())
+    for i in range(0, len(networks), 2):
         row = []
-        row.append(InlineKeyboardButton(text=currencies[i], callback_data=f"currency_{currencies[i]}"))
-        if i + 1 < len(currencies):
-            row.append(InlineKeyboardButton(text=currencies[i+1], callback_data=f"currency_{currencies[i+1]}"))
+        row.append(InlineKeyboardButton(
+            text=f"{networks[i]}", 
+            callback_data=f"generate_{networks[i]}"
+        ))
+        if i + 1 < len(networks):
+            row.append(InlineKeyboardButton(
+                text=f"{networks[i+1]}", 
+                callback_data=f"generate_{networks[i+1]}"
+            ))
         builder.row(*row)
     
     builder.row(InlineKeyboardButton(text="🔙 Назад", callback_data="back_to_main"))
     return builder.as_markup()
 
-def get_exchange_keyboard(from_currency: str) -> InlineKeyboardMarkup:
-    """Exchange target currency keyboard"""
+def get_wallet_count_keyboard(network: str) -> InlineKeyboardMarkup:
+    """Wallet count selection keyboard"""
     builder = InlineKeyboardBuilder()
     
-    currencies = [curr for curr in config.SUPPORTED_CURRENCIES if curr != from_currency]
-    for i in range(0, len(currencies), 2):
+    counts = [1, 3, 5, 10]
+    for i in range(0, len(counts), 2):
         row = []
-        row.append(InlineKeyboardButton(text=currencies[i], callback_data=f"exchange_{from_currency}_{currencies[i]}"))
-        if i + 1 < len(currencies):
-            row.append(InlineKeyboardButton(text=currencies[i+1], callback_data=f"exchange_{from_currency}_{currencies[i+1]}"))
+        row.append(InlineKeyboardButton(
+            text=str(counts[i]), 
+            callback_data=f"count_{network}_{counts[i]}"
+        ))
+        if i + 1 < len(counts):
+            row.append(InlineKeyboardButton(
+                text=str(counts[i+1]), 
+                callback_data=f"count_{network}_{counts[i+1]}"
+            ))
         builder.row(*row)
     
-    builder.row(InlineKeyboardButton(text="🔙 Назад", callback_data="back_to_currencies"))
+    builder.row(InlineKeyboardButton(text="✏️ Ввести вручную", callback_data=f"manual_count_{network}"))
+    builder.row(InlineKeyboardButton(text="🔙 Назад", callback_data="back_to_networks"))
     return builder.as_markup()
 
-def get_amount_keyboard(from_currency: str, to_currency: str) -> InlineKeyboardMarkup:
-    """Quick amount selection keyboard"""
+def get_asset_keyboard(network: str, operation: str = "withdraw") -> InlineKeyboardMarkup:
+    """Asset selection keyboard"""
     builder = InlineKeyboardBuilder()
     
-    amounts = [10, 50, 100, 500, 1000]
-    for i in range(0, len(amounts), 3):
-        row = []
-        for j in range(3):
-            if i + j < len(amounts):
-                amount = amounts[i + j]
-                row.append(InlineKeyboardButton(
-                    text=str(amount), 
-                    callback_data=f"amount_{from_currency}_{to_currency}_{amount}"
-                ))
-        builder.row(*row)
+    network_config = config.SUPPORTED_NETWORKS[network]
+    symbol = network_config['symbol']
     
-    builder.row(InlineKeyboardButton(text="✏️ Ввести вручную", callback_data=f"manual_amount_{from_currency}_{to_currency}"))
-    builder.row(InlineKeyboardButton(text="🔙 Назад", callback_data=f"back_to_exchange_{from_currency}"))
+    # Add native token
+    builder.row(InlineKeyboardButton(
+        text=symbol, 
+        callback_data=f"{operation}_{network}_{symbol}"
+    ))
+    
+    # Add USDT if supported
+    if network_config['supports_usdt']:
+        builder.row(InlineKeyboardButton(
+            text="USDT", 
+            callback_data=f"{operation}_{network}_USDT"
+        ))
+    
+    builder.row(InlineKeyboardButton(text="🔙 Назад", callback_data="back_to_main"))
     return builder.as_markup()
 
-def get_confirm_keyboard(from_currency: str, to_currency: str, amount: float) -> InlineKeyboardMarkup:
+def get_swap_keyboard(network: str) -> InlineKeyboardMarkup:
+    """Swap direction keyboard"""
+    builder = InlineKeyboardBuilder()
+    
+    network_config = config.SUPPORTED_NETWORKS[network]
+    symbol = network_config['symbol']
+    
+    if network_config['supports_usdt']:
+        builder.row(InlineKeyboardButton(
+            text=f"{symbol} → USDT", 
+            callback_data=f"swap_{network}_{symbol}_USDT"
+        ))
+        builder.row(InlineKeyboardButton(
+            text=f"USDT → {symbol}", 
+            callback_data=f"swap_{network}_USDT_{symbol}"
+        ))
+    
+    builder.row(InlineKeyboardButton(text="🔙 Назад", callback_data="back_to_main"))
+    return builder.as_markup()
+
+def get_staking_period_keyboard() -> InlineKeyboardMarkup:
+    """Staking period selection keyboard"""
+    builder = InlineKeyboardBuilder()
+    
+    periods = config.STAKING_PERIODS
+    for period_key, period_data in periods.items():
+        builder.row(InlineKeyboardButton(
+            text=f"{period_data['months']} мес. ({period_data['rate']}%)", 
+            callback_data=f"stake_period_{period_key}"
+        ))
+    
+    builder.row(InlineKeyboardButton(text="🔙 Назад", callback_data="back_to_main"))
+    return builder.as_markup()
+
+def get_staking_actions_keyboard() -> InlineKeyboardMarkup:
+    """Staking actions keyboard"""
+    builder = InlineKeyboardBuilder()
+    
+    builder.row(InlineKeyboardButton(text="📊 Мои стейки", callback_data="my_stakes"))
+    builder.row(InlineKeyboardButton(text="💹 Создать стейк", callback_data="create_stake"))
+    builder.row(InlineKeyboardButton(text="🔙 Назад", callback_data="back_to_main"))
+    
+    return builder.as_markup()
+
+def get_stake_action_keyboard(stake_id: int) -> InlineKeyboardMarkup:
+    """Individual stake action keyboard"""
+    builder = InlineKeyboardBuilder()
+    
+    builder.row(InlineKeyboardButton(
+        text="⚠️ Досрочный вывод", 
+        callback_data=f"early_withdraw_{stake_id}"
+    ))
+    builder.row(InlineKeyboardButton(text="🔙 Назад", callback_data="my_stakes"))
+    
+    return builder.as_markup()
+
+def get_confirm_keyboard(action: str, data: str) -> InlineKeyboardMarkup:
     """Confirmation keyboard"""
     builder = InlineKeyboardBuilder()
     
     builder.row(
-        InlineKeyboardButton(text="✅ Подтвердить", callback_data=f"confirm_{from_currency}_{to_currency}_{amount}"),
-        InlineKeyboardButton(text="❌ Отменить", callback_data="cancel_exchange")
+        InlineKeyboardButton(text="✅ Да", callback_data=f"confirm_{action}_{data}"),
+        InlineKeyboardButton(text="❌ Нет", callback_data="cancel_action")
     )
     
-    builder.row(InlineKeyboardButton(text="🔙 Назад", callback_data=f"back_to_amount_{from_currency}_{to_currency}"))
-    return builder.as_markup()
-
-def get_settings_keyboard() -> InlineKeyboardMarkup:
-    """Settings keyboard"""
-    builder = InlineKeyboardBuilder()
-    
-    builder.row(InlineKeyboardButton(text="🔔 Уведомления", callback_data="settings_notifications"))
-    builder.row(InlineKeyboardButton(text="🌍 Язык", callback_data="settings_language"))
-    builder.row(InlineKeyboardButton(text="🔒 Безопасность", callback_data="settings_security"))
     builder.row(InlineKeyboardButton(text="🔙 Назад", callback_data="back_to_main"))
-    
-    return builder.as_markup()
-
-def get_admin_keyboard() -> InlineKeyboardMarkup:
-    """Admin keyboard"""
-    builder = InlineKeyboardBuilder()
-    
-    builder.row(InlineKeyboardButton(text="📊 Статистика", callback_data="admin_stats"))
-    builder.row(InlineKeyboardButton(text="💰 Управление балансами", callback_data="admin_balances"))
-    builder.row(InlineKeyboardButton(text="📈 Управление курсами", callback_data="admin_rates"))
-    builder.row(InlineKeyboardButton(text="👥 Пользователи", callback_data="admin_users"))
-    builder.row(InlineKeyboardButton(text="🔙 Назад", callback_data="back_to_main"))
-    
     return builder.as_markup()
 
 def get_back_keyboard(callback_data: str) -> InlineKeyboardMarkup:
@@ -113,4 +163,14 @@ def get_yes_no_keyboard(callback_prefix: str) -> InlineKeyboardMarkup:
         InlineKeyboardButton(text="✅ Да", callback_data=f"{callback_prefix}_yes"),
         InlineKeyboardButton(text="❌ Нет", callback_data=f"{callback_prefix}_no")
     )
+    return builder.as_markup()
+
+def get_admin_keyboard() -> InlineKeyboardMarkup:
+    """Admin keyboard"""
+    builder = InlineKeyboardBuilder()
+    
+    builder.row(InlineKeyboardButton(text="📊 Статистика", callback_data="admin_stats"))
+    builder.row(InlineKeyboardButton(text="👥 Пользователи", callback_data="admin_users"))
+    builder.row(InlineKeyboardButton(text="🔙 Назад", callback_data="back_to_main"))
+    
     return builder.as_markup()
