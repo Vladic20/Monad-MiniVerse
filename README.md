@@ -1,27 +1,197 @@
-Monad MiniVerse: Your Universe of Thrill and Uniqueness
-Welcome to Monad MiniVerse — an exhilarating world where luck, strategy, and creativity collide. This isn’t just a project; it’s a mini-universe where every dice roll, every roulette spin, and every minted NFT becomes part of your legend. Powered by the Monad blockchain, we offer you an arena for thrilling duels, stylish avatars, and the chance to hit it big.
+# 💱 Crypto Exchange Telegram Bot
 
-The Three Pillars of Monad MiniVerse
-Dice Duel: The Roll That Decides It All
-The Core: Prove your prowess in a one-on-one showdown. Create a game or join an existing one with bets ranging from 0.1 to 100 MON. Two dice, two players, one victor.
-Mechanics: Roll the dice (2d6), compare scores. The winner takes 90% of the pot, while 10% fuels the MiniVerse treasury to keep our universe thriving. A tie? Bets are refunded.
-Vibe: Tension, risk, triumph—every roll is a dare to fate. Check the open games list and make your move!
-Roulette Rush: The Color of Your Luck
-The Core: Red or black? Place your bet from 0.1 to 100 MON, spin the wheel, and double your winnings.
-Mechanics: Blockchain-backed randomness picks the color. Guess right? You get x2 minus a 2% treasury cut. Your bets and top-10 leaderboard stats immortalize your feats.
-Vibe: A whirlwind of adrenaline where one spin can crown you a leader or spark the next challenge.
-NFT DiceMasters: Your Key to the Universe
-The Core: Claim your exclusive "Monad DiceMaster" NFT. Only 10,000 available, each at 0.11 MON.
-Mechanics: Simple ERC-721 minting with identical designs stored on IPFS. It’s more than an avatar—it’s your ticket to MiniVerse and a badge of honor.
-Vibe: Build your collection, stand out among players, and wear the DiceMaster title with pride.
-Why Monad MiniVerse?
-Accessibility: Start with just 0.1 MON—the entry is low, the stakes can soar (up to 100 MON).
-Transparency: All contracts are open, randomness is provable, payouts are guaranteed.
-Community: Leaderboards in roulette, dice duels, and NFTs unite risk-takers and collectors.
-Economy: The treasury grows with every game (10% from dice, 2% from roulette), fueling the project while you chase big wins.
-How It Works
-Dice: Create a game or join an open duel. Roll the dice, win, and claim 90% of the pot.
-Roulette: Pick a color, stake your MON, spin—get instant results and a shot at the top-10.
-NFT: Pay 0.11 MON, mint your DiceMaster, and join the MiniVerse elite.
-Monad MiniVerse — A Challenge to Fate and Creativity
-This is where thrill meets blockchain, and players become legends. Roll the dice, spin the wheel, own your NFT—your mini-universe awaits. The launch is here, and every move is a chance to etch your name into Monad MiniVerse history. Ready to risk it and claim your glory?
+Полнофункциональный Telegram бот для обмена валют и криптовалют с современным интерфейсом и надежной архитектурой.
+
+## 🚀 Возможности
+
+### 💰 Основные функции
+- **Обмен валют**: USD, EUR, RUB, BTC, ETH
+- **Просмотр баланса**: По всем поддерживаемым валютам
+- **История операций**: Детальная история всех транзакций
+- **Курсы валют**: Актуальные курсы в реальном времени
+- **Безопасность**: Защищенные транзакции с комиссией
+
+### 🛠 Технические особенности
+- **SQLite база данных**: Надежное хранение данных
+- **Асинхронная архитектура**: Высокая производительность
+- **FSM (Finite State Machine)**: Управление состояниями диалога
+- **Инлайн клавиатуры**: Удобная навигация
+- **Автообновление курсов**: Каждые 5 минут
+- **Админ панель**: Управление системой
+
+## 📋 Требования
+
+- Python 3.8+
+- aiogram 3.4.1+
+- python-dotenv
+- SQLite3
+
+## 🛠 Установка
+
+1. **Клонируйте репозиторий:**
+```bash
+git clone <repository-url>
+cd crypto-exchange-bot
+```
+
+2. **Установите зависимости:**
+```bash
+pip install -r requirements.txt
+```
+
+3. **Настройте конфигурацию:**
+```bash
+cp .env.example .env
+```
+
+4. **Отредактируйте .env файл:**
+```env
+BOT_TOKEN=your_bot_token_here
+ADMIN_IDS=123456789,987654321
+SECRET_KEY=your-secret-key-here
+```
+
+5. **Запустите бота:**
+```bash
+python bot.py
+```
+
+## 🔧 Настройка бота
+
+### Получение токена бота
+1. Найдите @BotFather в Telegram
+2. Отправьте команду `/newbot`
+3. Следуйте инструкциям для создания бота
+4. Скопируйте полученный токен в `.env` файл
+
+### Настройка админов
+Добавьте ID администраторов в переменную `ADMIN_IDS` через запятую:
+```env
+ADMIN_IDS=123456789,987654321
+```
+
+## 📁 Структура проекта
+
+```
+crypto-exchange-bot/
+├── bot.py              # Основной файл бота
+├── config.py           # Конфигурация
+├── database.py         # Работа с базой данных
+├── exchange_service.py # Сервис обмена валют
+├── keyboards.py        # Клавиатуры
+├── requirements.txt    # Зависимости
+├── .env.example       # Пример конфигурации
+└── README.md          # Документация
+```
+
+## 🎯 Использование
+
+### Команды бота
+- `/start` - Запуск бота и регистрация
+- `/help` - Справка по использованию
+
+### Основные функции
+1. **💰 Баланс** - Просмотр баланса по всем валютам
+2. **💱 Обмен валют** - Обмен между валютами
+3. **📊 Курсы валют** - Актуальные курсы
+4. **📈 История операций** - История транзакций
+5. **⚙️ Настройки** - Настройки и админ панель
+
+### Процесс обмена
+1. Выберите "💱 Обмен валют"
+2. Выберите валюту для обмена
+3. Выберите валюту для получения
+4. Введите сумму или выберите из предложенных
+5. Подтвердите операцию
+
+## 🔒 Безопасность
+
+- **Комиссия**: 2% с каждой операции
+- **Лимиты**: Минимум $1, максимум $10,000
+- **Валидация**: Проверка баланса и лимитов
+- **Логирование**: Все операции записываются в базу
+
+## 📊 База данных
+
+### Таблицы
+- **users** - Пользователи и их балансы
+- **transactions** - История транзакций
+- **orders** - Ордера (для будущих функций)
+- **exchange_rates** - Курсы валют
+
+### Автоматическое создание
+База данных создается автоматически при первом запуске.
+
+## 🚀 Развертывание
+
+### Локальный запуск
+```bash
+python bot.py
+```
+
+### Docker (опционально)
+```dockerfile
+FROM python:3.9-slim
+WORKDIR /app
+COPY requirements.txt .
+RUN pip install -r requirements.txt
+COPY . .
+CMD ["python", "bot.py"]
+```
+
+## 🔧 Конфигурация
+
+### Основные параметры (config.py)
+```python
+SUPPORTED_CURRENCIES = ['USD', 'EUR', 'RUB', 'BTC', 'ETH']
+MIN_TRADE_AMOUNT = 1.0
+MAX_TRADE_AMOUNT = 10000.0
+EXCHANGE_FEE = 0.02  # 2%
+```
+
+### Переменные окружения (.env)
+- `BOT_TOKEN` - Токен Telegram бота
+- `ADMIN_IDS` - ID администраторов
+- `SECRET_KEY` - Секретный ключ
+- `DATABASE_PATH` - Путь к базе данных
+
+## 🐛 Устранение неполадок
+
+### Частые проблемы
+1. **Ошибка токена**: Проверьте правильность токена в .env
+2. **Ошибка базы данных**: Убедитесь в правах записи в папку
+3. **Ошибки импорта**: Установите все зависимости
+
+### Логи
+Бот ведет подробные логи. Проверьте консоль для диагностики.
+
+## 🔮 Планы развития
+
+- [ ] Интеграция с реальными API курсов валют
+- [ ] Графики изменения курсов
+- [ ] Уведомления о курсах
+- [ ] Многоязычная поддержка
+- [ ] Веб-интерфейс
+- [ ] API для внешних интеграций
+
+## 📞 Поддержка
+
+Для получения поддержки:
+- Создайте Issue в репозитории
+- Обратитесь к @support в Telegram
+
+## 📄 Лицензия
+
+MIT License - см. файл LICENSE для деталей.
+
+## 🤝 Вклад в проект
+
+Приветствуются Pull Request'ы! Пожалуйста:
+1. Форкните репозиторий
+2. Создайте ветку для новой функции
+3. Внесите изменения
+4. Создайте Pull Request
+
+---
+
+**Создано с ❤️ для сообщества Telegram**
